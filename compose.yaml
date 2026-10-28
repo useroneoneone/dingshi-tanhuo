@@ -1,0 +1,27 @@
+services:
+  tanhuo:
+    image: "${TANHUO_IMAGE:-dingshi-tanhuo:local}"
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${HOST_BIND:-127.0.0.1}:${HOST_PORT:-3000}:3000"
+    environment:
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
+      SECURE_COOKIE: "${SECURE_COOKIE:-false}"
+      TRUST_PROXY: "${TRUST_PROXY:-false}"
+      ALLOW_PRIVATE_ENDPOINTS: "${ALLOW_PRIVATE_ENDPOINTS:-false}"
+    volumes:
+      - tanhuo-data:/app/data
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  tanhuo-data:

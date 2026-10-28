@@ -1,0 +1,6 @@
+services:
+  tanhuo:
+    build:
+      context: .
+      args:
+        NODE_IMAGE: "${NODE_IMAGE:-node:24-bookworm-slim}"
