@@ -10,7 +10,11 @@ source_root=$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 installer="$source_root/scripts/install.sh"
 test_root=$(mktemp -d /opt/tanhuo-installer-tests.XXXXXXXX)
 trap 'rm -rf -- "$test_root"' EXIT
-trap 'printf "FAIL: %s (line %s)\n" "${test_name:-setup}" "$LINENO" >&2' ERR
+report_failure() {
+  printf 'FAIL: %s (line %s)\n' "${test_name:-setup}" "$1" >&2
+  if [[ -f ${case_root:-}/output ]]; then cat -- "$case_root/output" >&2; fi
+}
+trap 'report_failure "$LINENO"' ERR
 mkdir -p "$test_root/bin" "$test_root/release"
 export MOCK_BIN="$test_root/bin"
 export MOCK_DOCKER_SOURCE="$test_root/docker-source"
@@ -211,6 +215,26 @@ existing_state() {
   printf '%s' "$1" > "$MOCK_STATE/project"
   printf '%s' "$case_root/deploy" > "$MOCK_STATE/directory"
   touch "$MOCK_STATE/volume" "$MOCK_STATE/container"
+}
+
+make_offline_bundle() {
+  offline_bundle="$case_root/offline-bundle"
+  mkdir "$offline_bundle"
+  cp -- "$MOCK_RELEASE/compose.yaml" "$MOCK_RELEASE/env.example" "$MOCK_RELEASE/install.sh" \
+    "$MOCK_RELEASE/dingshi-tanhuo-1.0.1-linux-amd64.tar.gz" \
+    "$MOCK_RELEASE/dingshi-tanhuo-1.0.1-linux-amd64.tar.gz.sha256" "$offline_bundle/"
+  printf '#!/usr/bin/env bash\nexit 0\n' > "$offline_bundle/install-offline.sh"
+  printf 'Synthetic offline instructions for installer tests.\n' > "$offline_bundle/README-OFFLINE.md"
+  (
+    cd -- "$offline_bundle"
+    sha256sum compose.yaml env.example install.sh install-offline.sh README-OFFLINE.md \
+      dingshi-tanhuo-1.0.1-linux-amd64.tar.gz dingshi-tanhuo-1.0.1-linux-amd64.tar.gz.sha256 > SHA256SUMS
+  )
+}
+
+assert_offline_commands() {
+  ! grep -Eq '^curl |^apt-get |^systemctl ' "$MOCK_LOG"
+  ! grep -Eq 'docker (build|buildx|pull)' "$MOCK_LOG"
 }
 
 invoke() {
@@ -526,6 +550,154 @@ pass
 new_case download_truncation_does_not_run_main
 head -n -1 "$installer" | bash
 [[ ! -e $case_root/deploy && ! -s $MOCK_LOG ]]
+pass
+
+new_case offline_install_without_curl
+make_offline_bundle
+mkdir "$case_root/no-curl-bin"
+for command in bash node uname sha256sum mktemp realpath stat awk install dirname cp cmp mkdir rmdir rm touch sleep cat; do
+  ln -s "$(command -v "$command")" "$case_root/no-curl-bin/$command"
+done
+ln -s "$test_root/bin/docker" "$case_root/no-curl-bin/docker"
+PATH="$case_root/no-curl-bin" invoke --offline-dir "$offline_bundle" --port 5123
+grep -Fq 'Installation successful:' "$case_root/output"
+grep -Fxq 'HOST_PORT=5123' "$case_root/deploy/.env"
+grep -Fq 'ssh -N -L 3000:127.0.0.1:5123 user@your-server' "$case_root/output"
+assert_offline_commands
+pass
+
+new_case offline_repeat_preserves_configuration
+make_offline_bundle
+invoke --offline-dir "$offline_bundle"
+printf 'TANHUO_IMAGE=dingshi-tanhuo:1.0.0\nADMIN_PASSWORD=synthetic-offline-retained\nHOST_PORT=5454\nHOST_BIND=127.0.0.1\nSECURE_COOKIE=true\n' > "$case_root/deploy/.env"
+cp "$case_root/deploy/.env" "$case_root/before.env"
+: > "$MOCK_LOG"
+invoke --offline-dir "$offline_bundle"
+diff <(sed '/^TANHUO_IMAGE=/d' "$case_root/before.env") <(sed '/^TANHUO_IMAGE=/d' "$case_root/deploy/.env")
+grep -Fxq 'TANHUO_IMAGE=dingshi-tanhuo:1.0.1' "$case_root/deploy/.env"
+grep -Fq 'docker run --rm --pull never --network none' "$MOCK_LOG"
+! grep -Fq ' logs ' "$MOCK_LOG"
+assert_offline_commands
+pass
+
+new_case offline_corrupt_image
+make_offline_bundle
+printf corrupted >> "$offline_bundle/dingshi-tanhuo-1.0.1-linux-amd64.tar.gz"
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'Checksum verification failed' "$case_root/output"
+[[ ! -e $case_root/deploy/.env ]]
+! grep -Fq 'docker load' "$MOCK_LOG"
+assert_offline_commands
+pass
+
+new_case offline_all_manifest_payloads_checked
+make_offline_bundle
+printf corrupted >> "$offline_bundle/README-OFFLINE.md"
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'Checksum verification failed: README-OFFLINE.md' "$case_root/output"
+[[ ! -e $case_root/deploy/.env ]]
+! grep -Fq 'docker load' "$MOCK_LOG"
+assert_offline_commands
+pass
+
+new_case offline_missing_image_no_download_fallback
+make_offline_bundle
+rm "$offline_bundle/dingshi-tanhuo-1.0.1-linux-amd64.tar.gz"
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'Missing or unsafe offline asset' "$case_root/output"
+[[ ! -e $case_root/deploy/.env ]]
+! grep -Fq 'docker load' "$MOCK_LOG"
+assert_offline_commands
+pass
+
+new_case offline_wrong_architecture_no_download_fallback
+make_offline_bundle
+export MOCK_ARCH=aarch64
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'dingshi-tanhuo-1.0.1-linux-arm64.tar.gz' "$case_root/output"
+[[ ! -e $case_root/deploy/.env ]]
+assert_offline_commands
+pass
+
+new_case offline_symlink_image_rejected
+make_offline_bundle
+rm "$offline_bundle/dingshi-tanhuo-1.0.1-linux-amd64.tar.gz"
+ln -s "$MOCK_RELEASE/dingshi-tanhuo-1.0.1-linux-amd64.tar.gz" "$offline_bundle/dingshi-tanhuo-1.0.1-linux-amd64.tar.gz"
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'regular files only' "$case_root/output"
+[[ ! -e $case_root/deploy/.env ]]
+assert_offline_commands
+pass
+
+new_case offline_symlink_additional_payload_rejected
+make_offline_bundle
+mv "$offline_bundle/README-OFFLINE.md" "$case_root/real-readme"
+ln -s "$case_root/real-readme" "$offline_bundle/README-OFFLINE.md"
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'regular files only' "$case_root/output"
+[[ ! -e $case_root/deploy/.env ]]
+assert_offline_commands
+pass
+
+new_case offline_missing_docker_never_bootstraps
+make_offline_bundle
+rm "$test_root/bin/docker"
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'installed in advance; network installation is disabled' "$case_root/output"
+[[ ! -e $case_root/deploy ]]
+[[ ! -s $MOCK_LOG ]]
+pass
+
+new_case offline_missing_compose_never_bootstraps
+make_offline_bundle
+export MOCK_COMPOSE_MISSING=1
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'Compose plugin is missing' "$case_root/output"
+[[ ! -e $case_root/deploy ]]
+assert_offline_commands
+pass
+
+new_case offline_inaccessible_docker_no_mutation
+make_offline_bundle
+export MOCK_DAEMON_FAIL=1
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'daemon is inaccessible' "$case_root/output"
+[[ ! -e $case_root/deploy ]]
+assert_offline_commands
+pass
+
+new_case offline_empty_directory_argument_never_falls_back
+expect_failure --offline-dir ''
+grep -Fq -- '--offline-dir must refer to an existing' "$case_root/output"
+[[ ! -e $case_root/deploy && ! -s $MOCK_LOG ]]
+pass
+
+new_case offline_custom_compose_cannot_trigger_remote_include
+make_offline_bundle
+invoke --offline-dir "$offline_bundle"
+printf 'include:\n  - https://example.invalid/remote.yaml\n' > "$case_root/deploy/compose.yaml"
+cp "$case_root/deploy/.env" "$case_root/before.env"
+: > "$MOCK_LOG"
+expect_failure --offline-dir "$offline_bundle"
+grep -Fq 'no Compose parsing or remote include was attempted' "$case_root/output"
+diff "$case_root/before.env" "$case_root/deploy/.env"
+grep -Fq 'https://example.invalid/remote.yaml' "$case_root/deploy/compose.yaml"
+! grep -Fq ' config ' "$MOCK_LOG"
+! grep -Fq 'docker load' "$MOCK_LOG"
+assert_offline_commands
+pass
+
+new_case offline_manual_stock_adoption
+make_offline_bundle
+mkdir -m 700 "$case_root/deploy"
+cp "$offline_bundle/compose.yaml" "$case_root/deploy/compose.yaml"
+printf 'TANHUO_IMAGE=dingshi-tanhuo:1.0.0\nHOST_PORT=7999\nCUSTOM=preserve\n' > "$case_root/deploy/.env"
+existing_state legacy
+invoke --offline-dir "$offline_bundle" --adopt --project legacy
+[[ $(< "$case_root/deploy/.tanhuo-project") == legacy ]]
+grep -Fxq 'CUSTOM=preserve' "$case_root/deploy/.env"
+grep -Fq 'Installation successful:' "$case_root/output"
+assert_offline_commands
 pass
 
 new_case fresh_docker_official_repository_bootstrap

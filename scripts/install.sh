@@ -8,9 +8,12 @@ Install Tanhuo from a prebuilt GitHub Release. No application build occurs.
 Usage:
   curl -fsSL https://github.com/useroneoneone/dingshi-tanhuo/releases/latest/download/install.sh | bash
   bash install.sh --dir /opt/tanhuo --project tanhuo --port 3000
+  bash install.sh --offline-dir /path/to/extracted/offline-bundle
   bash install.sh --dir /existing/deployment --project EXISTING_PROJECT --adopt
 
 Options:
+  --offline-dir PATH     Use only local bundle files; never download or use apt.
+                         Requires Docker Engine and Compose already installed.
   --dir PATH             Absolute install directory. Default: /opt/tanhuo.
   --project NAME         Compose project name. Default: tanhuo, or saved name.
   --port PORT            Initial host port. Default: 3000. Fresh installs only.
@@ -31,6 +34,7 @@ fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
 say() { printf '%s\n' "$*"; }
 
 download() {
+  ((offline_mode == 0)) || fail 'Network downloads are disabled in offline mode.'
   curl --fail --silent --show-error --location --retry 3 --connect-timeout 20 \
     --proto '=https' --proto-redir '=https' --output "$2" "$1"
 }
@@ -38,11 +42,11 @@ download() {
 verify_asset() {
   local asset=$1 hash name extra matches=0 expected=
   local -A seen=()
-  while read -r hash name extra; do
+  while read -r hash name extra || [[ -n $hash || -n $name || -n $extra ]]; do
     [[ -z $hash && -z $name && -z $extra ]] && continue
     [[ $hash =~ ^[a-fA-F0-9]{64}$ && -z $extra ]] || fail 'Malformed SHA256SUMS.'
     case "$name" in
-      compose.yaml|env.example|install.sh|dingshi-tanhuo-1.0.1-linux-amd64.tar.gz|dingshi-tanhuo-1.0.1-linux-arm64.tar.gz|dingshi-tanhuo-1.0.1-linux-amd64.tar.gz.sha256|dingshi-tanhuo-1.0.1-linux-arm64.tar.gz.sha256) ;;
+      compose.yaml|env.example|install.sh|install-offline.sh|README-OFFLINE.md|dingshi-tanhuo-1.0.1-linux-amd64.tar.gz|dingshi-tanhuo-1.0.1-linux-arm64.tar.gz|dingshi-tanhuo-1.0.1-linux-amd64.tar.gz.sha256|dingshi-tanhuo-1.0.1-linux-arm64.tar.gz.sha256) ;;
       *) fail "Unexpected checksum filename: $name" ;;
     esac
     [[ -z ${seen[$name]+present} ]] || fail "Duplicate checksum filename: $name"
@@ -55,6 +59,37 @@ verify_asset() {
   [[ $matches == 1 ]] || fail "Expected exactly one checksum for $asset."
   (cd -- "$temporary"; printf '%s  %s\n' "$expected" "$asset" | sha256sum --check --status) \
     || fail "Checksum verification failed: $asset"
+}
+
+copy_offline_asset() {
+  local name=$1 source="$offline_directory/$1"
+  [[ -f $source && ! -L $source ]] || fail "Missing or unsafe offline asset (regular files only): $name"
+  cp --no-dereference -- "$source" "$temporary/$name"
+  [[ -f $temporary/$name && ! -L $temporary/$name ]] || fail "Unsafe copied offline asset: $name"
+}
+
+stage_offline_payload() {
+  local asset=$1 entry hash name extra
+  say "Using offline bundle: $offline_directory"
+  for entry in SHA256SUMS compose.yaml env.example "$asset"; do copy_offline_asset "$entry"; done
+  for entry in compose.yaml env.example "$asset"; do verify_asset "$entry"; done
+  while read -r hash name extra || [[ -n $hash || -n $name || -n $extra ]]; do
+    [[ -z $hash && -z $name && -z $extra ]] && continue
+    if [[ ! -f $temporary/$name ]]; then copy_offline_asset "$name"; fi
+    verify_asset "$name"
+  done < "$temporary/SHA256SUMS"
+}
+
+check_docker_ready() {
+  if ! command -v docker >/dev/null; then
+    ((offline_mode == 0)) \
+      || fail 'Offline installation requires Docker Engine and the Compose plugin to be installed in advance; network installation is disabled.'
+    install_docker
+  fi
+  docker info >/dev/null 2>&1 \
+    || fail 'Docker is installed but its daemon is inaccessible. Start Docker and check root permissions; it will not be reinstalled.'
+  docker compose version >/dev/null 2>&1 \
+    || fail 'Docker Compose plugin is missing. Install it before retrying; the existing Engine will not be replaced and offline mode never installs packages.'
 }
 
 compose() (
@@ -205,7 +240,7 @@ check_existing_deployment() {
       fail 'The previously installed data volume is missing. Restore it instead of creating an empty database.'
     fi
     compose config --format json > "$temporary/existing-compose.json"
-    docker run --rm --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+    docker run --rm --pull never --network none --read-only --cap-drop ALL --security-opt no-new-privileges:true \
       --interactive --entrypoint node "$image" --input-type=module -e '
         import { readFileSync } from "node:fs";
         const project = process.argv[1];
@@ -240,6 +275,7 @@ check_existing_deployment() {
 
 install_docker() {
   local ID= VERSION_ID= VERSION_CODENAME= UBUNTU_CODENAME= suite package status architecture
+  ((offline_mode == 0)) || fail 'Docker package installation is disabled in offline mode.'
   ((skip_docker_install == 0)) || fail 'Docker is missing and --skip-docker-install was selected.'
   [[ -f /etc/os-release ]] || fail 'Install Docker Engine and its Compose plugin before retrying.'
   . /etc/os-release
@@ -331,6 +367,8 @@ main() {
   project=tanhuo
   port=3000
   bind=127.0.0.1
+  offline_directory=
+  offline_mode=0
   project_set=0 port_set=0 bind_set=0 adopt=0 skip_docker_install=0
   temporary= backup= lock_acquired=0 configuration_applied=0 start_attempted=0 fresh=1
   while (($#)); do
@@ -338,13 +376,14 @@ main() {
       --help|-h) usage; return 0 ;;
       --adopt) adopt=1; shift ;;
       --skip-docker-install) skip_docker_install=1; shift ;;
-      --dir|--project|--port|--bind)
+      --dir|--project|--port|--bind|--offline-dir)
         (($# >= 2)) || fail "Missing value for $1"
         case "$1" in
           --dir) directory=$2 ;;
           --project) project=$2; project_set=1 ;;
           --port) port=$2; port_set=1 ;;
           --bind) bind=$2; bind_set=1 ;;
+          --offline-dir) offline_directory=$2; offline_mode=1 ;;
         esac
         shift 2 ;;
       *) fail "Unknown option: $1" ;;
@@ -363,9 +402,20 @@ main() {
     aarch64|arm64) platform=arm64 ;;
     *) fail "Unsupported server architecture: $machine" ;;
   esac
-  for entry in curl sha256sum mktemp realpath stat awk install dirname; do
+  for entry in sha256sum mktemp realpath stat awk install dirname; do
     command -v "$entry" >/dev/null || fail "Required command is missing: $entry"
   done
+  if ((offline_mode)); then
+    for entry in cp cmp; do
+      command -v "$entry" >/dev/null || fail "Required offline command is missing: $entry"
+    done
+    [[ -d $offline_directory && ! -L $offline_directory && $offline_directory != *$'\n'* && $offline_directory != *$'\r'* ]] \
+      || fail '--offline-dir must refer to an existing, non-symlink bundle directory.'
+    offline_directory=$(realpath -e -- "$offline_directory")
+    check_docker_ready
+  else
+    command -v curl >/dev/null || fail 'Required command is missing: curl'
+  fi
   umask 077
   trap cleanup EXIT
   trap 'exit 130' INT
@@ -375,16 +425,20 @@ main() {
   base="https://github.com/$repository/releases/download/v$version"
   asset="dingshi-tanhuo-$version-linux-$platform.tar.gz"
   image="dingshi-tanhuo:$version"
-  say "Downloading Tanhuo $version for linux/$platform..."
-  for entry in SHA256SUMS compose.yaml env.example "$asset"; do
-    download "$base/$entry" "$temporary/$entry"
-  done
-  for entry in compose.yaml env.example "$asset"; do verify_asset "$entry"; done
-  if ! command -v docker >/dev/null; then install_docker; fi
-  docker info >/dev/null 2>&1 \
-    || fail 'Docker is installed but its daemon is inaccessible. Start Docker and check root permissions; it will not be reinstalled.'
-  docker compose version >/dev/null 2>&1 \
-    || fail 'Docker Compose plugin is missing. Install it using the Docker documentation; the existing Engine will not be replaced.'
+  if ((offline_mode)); then
+    stage_offline_payload "$asset"
+    if ((!fresh)); then
+      cmp --silent -- "$directory/compose.yaml" "$temporary/compose.yaml" \
+        || fail 'Offline updates require the existing compose.yaml to match the bundled stock template exactly. Custom Compose files require manual migration; no Compose parsing or remote include was attempted.'
+    fi
+  else
+    say "Downloading Tanhuo $version for linux/$platform..."
+    for entry in SHA256SUMS compose.yaml env.example "$asset"; do
+      download "$base/$entry" "$temporary/$entry"
+    done
+    for entry in compose.yaml env.example "$asset"; do verify_asset "$entry"; done
+    check_docker_ready
+  fi
   say 'Loading the verified prebuilt image (no compilation)...'
   docker load --input "$temporary/$asset"
   [[ $(docker image inspect "$image" --format '{{.Os}}/{{.Architecture}}') == "linux/$platform" ]] \

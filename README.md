@@ -118,7 +118,32 @@ chmod 600 backups/tanhuo-backup.tar.gz
 
 替换示例中的实际卷名和镜像版本。备份含敏感数据，应加密保存并限制访问，不能上传到公开仓库或公开 Release。
 
-### 本地构建与离线部署
+### 离线安装包
+
+针对不能访问 GitHub 或镜像仓库的 x86-64 Ubuntu 服务器，下载 Release 中的 `dingshi-tanhuo-1.0.1-linux-amd64-offline.tar.gz` 及同名 `.sha256`，再上传到服务器。包内包含预构建镜像、部署配置、校验文件和离线安装脚本，不含本机密码、API 密钥或运行数据。
+
+**离线服务器必须预装并启动 Docker Engine 和 Docker Compose v2 插件。离线包不包含 Docker 或系统依赖安装包。** 安装应用时不访问网络、不拉取镜像、不构建；安装后检测任务仍需能连接你配置的 API。
+
+```bash
+sha256sum -c dingshi-tanhuo-1.0.1-linux-amd64-offline.tar.gz.sha256
+tar -xzf dingshi-tanhuo-1.0.1-linux-amd64-offline.tar.gz
+cd dingshi-tanhuo-1.0.1-linux-amd64-offline
+sudo bash install-offline.sh
+```
+
+root 用户可省略 `sudo`。安装目录仍默认为 `/opt/tanhuo`，监听 `127.0.0.1:3000`，初始账号和密码显示方式与在线安装一致；访问方式见上文 SSH 隧道。解压目录与安装目录需分开。
+
+离线升级时解压新包并执行 `sudo bash install-offline.sh --dir /opt/tanhuo`，必须沿用原安装目录和项目名，升级前先备份数据。现有 `.env` 设置、密码、任务和密钥会保留。为避免 Compose 的远程引用隐式下载，离线自动升级仅接受原版 `compose.yaml`；自定义 Compose 部署需手动迁移。
+
+维护者可复用已导出的镜像生成离线包，不再次构建：
+
+```bash
+node scripts/package-offline.mjs
+```
+
+脚本读取当前 `package.json` 版本，校验 `artifacts/` 中的镜像，输出离线压缩包及 SHA256；可用 `--platform linux/arm64`、`--image-dir PATH`、`--output-dir PATH` 指定架构和目录。仅打包显式列出的发布文件，不会包含工作目录或运行数据，也不会覆盖已有归档。
+
+### 本地构建与手动导入
 
 一键安装不需要本地构建。维护者需要生成新版本时，才在本地 Docker 环境执行：
 
@@ -224,4 +249,6 @@ compose.yaml        仅运行预构建镜像及持久化卷
 compose.build.yaml  可选的本地 Compose 构建配置
 scripts/build-image.*  本地构建、导出镜像和 SHA256
 scripts/install.sh  云服务器一键安装与更新
+scripts/package-offline.mjs  使用已有镜像生成离线安装包
+scripts/offline/    离线安装入口与随包说明
 ```
