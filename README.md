@@ -21,7 +21,7 @@
 
 ### 1. 获取镜像包
 
-可以从本仓库 GitHub Releases 下载对应版本的镜像包和同名 `.sha256` 文件，也可以在本地项目目录构建。
+可以从本仓库 GitHub Releases 下载对应版本的镜像包和同名 `.sha256` 文件，也可以在本地项目目录构建。Release 另附 `compose.yaml` 和配置模板 `env.example`；若直接使用 Release 附件，后续的 `cp .env.example .env` 改为 `cp env.example .env`，无需下载源码。
 
 Windows PowerShell：
 
