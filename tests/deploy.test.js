@@ -55,3 +55,16 @@ test('local exporter help and invalid versions finish without invoking Docker', 
   assert.notEqual(invalid.status, 0);
   assert.match(`${invalid.stdout}${invalid.stderr}`, /Version must be/);
 });
+
+test('one-command installer agrees with the release version and never builds on the server', () => {
+  const version = JSON.parse(read('package.json')).version;
+  const installer = read('scripts/install.sh');
+  assert.ok(installer.includes(`version=${version} `), 'Installer must pin the current release version.');
+  assert.ok(read('.env.example').includes(`TANHUO_IMAGE=dingshi-tanhuo:${version}`));
+  assert.match(installer, /releases\/download\/v\$version/);
+  assert.match(installer, /SHA256SUMS/);
+  assert.match(installer, /--pull never --no-build/);
+  assert.doesNotMatch(installer, /\bdocker\s+(?:build|buildx|compose\s+build)\b/);
+  assert.ok(installer.trimEnd().endsWith('main "$@"'), 'Streamed installation must start only after all functions are downloaded.');
+  assert.match(read('README.md'), /releases\/latest\/download\/install\.sh/);
+});

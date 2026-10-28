@@ -6,13 +6,13 @@ usage() {
 Build a Linux image locally and export a compressed, checksum-protected archive.
 
 Usage:
-  bash scripts/build-image.sh --version 1.0.0
-  bash scripts/build-image.sh --version 1.0.0 --platform linux/arm64
-  bash scripts/build-image.sh --version 1.0.0 --base-image public.ecr.aws/docker/library/node:24-bookworm-slim
-  bash scripts/build-image.sh --version 1.0.0 --image ghcr.io/OWNER/dingshi-tanhuo:1.0.0 --push
+  bash scripts/build-image.sh --version 1.0.1
+  bash scripts/build-image.sh --version 1.0.1 --platform linux/arm64
+  bash scripts/build-image.sh --version 1.0.1 --base-image public.ecr.aws/docker/library/node:24-bookworm-slim
+  bash scripts/build-image.sh --version 1.0.1 --image ghcr.io/OWNER/dingshi-tanhuo:1.0.1 --push
 
 Options:
-  --version      Archive version and default image tag. Default: 1.0.0.
+  --version      Archive version and default image tag. Default: 1.0.1.
   --platform     linux/amd64 or linux/arm64. Match the cloud server architecture.
   --image        Image reference. Default: dingshi-tanhuo:<version>.
   --base-image   Optional Dockerfile NODE_IMAGE override.
@@ -26,7 +26,7 @@ HELP
 }
 
 fail() { printf 'Error: %s\n' "$*" >&2; exit 1; }
-version=1.0.0
+version=1.0.1
 platform=linux/amd64
 image=
 base_image=

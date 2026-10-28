@@ -13,83 +13,81 @@
 - SQLite 持久化，运行记录按保留天数清理。
 - API 密钥加密存储，前端保存后只得到“已配置”状态，无法读回密钥。
 
-## 轻量云部署
+## 一键部署
 
-镜像在本地电脑构建，云服务器只负责加载和运行。`compose.yaml` 不包含构建步骤，云端不需要 Node.js、npm 或源码依赖。
-
-需要本地安装 Docker Desktop（使用 Linux 容器），云端安装 Docker Engine 和 Docker Compose。当前发布镜像为 `linux/amd64`；云端执行 `uname -m`，`x86_64` 对应 `linux/amd64`，`aarch64` 对应 `linux/arm64`，不要混用架构。
-
-### 1. 获取镜像包
-
-可以从本仓库 GitHub Releases 下载对应版本的镜像包和同名 `.sha256` 文件，也可以在本地项目目录构建。Release 另附 `compose.yaml` 和配置模板 `env.example`；若直接使用 Release 附件，后续的 `cp .env.example .env` 改为 `cp env.example .env`，无需下载源码。
-
-Windows PowerShell：
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-image.ps1 -Version 1.0.0
-```
-
-Linux / macOS：
+在云服务器的 **root 终端**执行：
 
 ```bash
-bash scripts/build-image.sh --version 1.0.0
+curl -fsSL https://github.com/useroneoneone/dingshi-tanhuo/releases/latest/download/install.sh | bash
 ```
 
-输出到 `artifacts/`：
-
-```text
-dingshi-tanhuo-1.0.0-linux-amd64.tar.gz
-dingshi-tanhuo-1.0.0-linux-amd64.tar.gz.sha256
-```
-
-ARM 服务器分别添加 `-Platform linux/arm64` 或 `--platform linux/arm64`。如果本地无法连接 Docker Hub，分别添加 `-BaseImage public.ecr.aws/docker/library/node:24-bookworm-slim` 或 `--base-image public.ecr.aws/docker/library/node:24-bookworm-slim`。
-
-脚本只保存镜像，不包含本地管理员、API 密钥、`.env` 或运行数据卷，不会自动推送任何镜像仓库。重复运行不会覆盖已有镜像包；更新时请使用新版本号。
-
-### 2. 上传到云服务器
-
-在云服务器准备一个固定部署目录：
+普通用户使用：
 
 ```bash
-mkdir -p ~/tanhuo
+curl -fsSL https://github.com/useroneoneone/dingshi-tanhuo/releases/latest/download/install.sh | sudo bash
 ```
 
-在本地项目目录上传以下四个文件，将 `user@your-server` 换成实际 SSH 地址：
+支持 x86-64 Ubuntu 云服务器（也提供 ARM64 镜像）。需要 `curl` 和 root/sudo 权限。安装脚本会：
 
-```powershell
-scp .\compose.yaml .\.env.example .\artifacts\dingshi-tanhuo-1.0.0-linux-amd64.tar.gz .\artifacts\dingshi-tanhuo-1.0.0-linux-amd64.tar.gz.sha256 user@your-server:~/tanhuo/
-```
+- 自动识别 x86-64 / ARM64，下载本地预构建的对应架构镜像。
+- 校验下载文件、导入镜像并启动，云端不编译，不需要 Node.js、npm、Git 或 Docker Hub 连接。
+- 缺少 Docker 时，在 Ubuntu/Debian 使用 Docker 官方软件源安装 Engine 和 Compose 插件；不自动卸载或替换已有容器环境。
+- 默认使用 `/opt/tanhuo`、Compose 项目名 `tanhuo`，保留任务、密钥和数据库。
+- 等待服务健康后显示访问方式；首次安装显示初始管理员信息，升级不重置密码。
 
-不需要上传整个项目、`node_modules` 或本地 `.env`。
+其他 Linux 发行版需预装 Docker Engine 和 Compose 插件。已有 Docker 但缺少 Compose、守护进程不可访问或存在冲突软件包时，脚本会停止并提示修复，不会重装现有环境。服务器需能访问 GitHub 及其 Release 下载域名；自动安装 Docker 还需访问 Docker 官方及系统软件源。
 
-### 3. 导入并启动
+安装脚本以 root 权限运行，可先查看仓库的 `scripts/install.sh` 再执行。附件的 SHA256 用于检测下载损坏，不是独立的发布签名。
 
-在云服务器执行：
+### 访问与登录
+
+默认仅监听服务器本机 `127.0.0.1:3000`。没有域名时，在自己的电脑执行 SSH 隧道：
 
 ```bash
-cd ~/tanhuo
-sha256sum -c dingshi-tanhuo-1.0.0-linux-amd64.tar.gz.sha256
-docker load -i dingshi-tanhuo-1.0.0-linux-amd64.tar.gz
-cp .env.example .env
-chmod 600 .env
+ssh -N -L 3000:127.0.0.1:3000 user@your-server
 ```
 
-编辑 `.env`，确认 `TANHUO_IMAGE=dingshi-tanhuo:1.0.0`。首次启动前可设置至少 12 位的独立 `ADMIN_PASSWORD`；留空则首次启动会生成随机密码，仅在启动日志输出一次。不要把 `.env` 提交到 GitHub。
+随后打开本机 `http://127.0.0.1:3000`。默认用户名为 `admin`，首次随机密码在安装输出和首次启动日志中显示，请登录后在“系统设置”修改。不要在公网明文 HTTP 下登录或填写 API 密钥。
+
+### 自定义安装
+
+新安装时可指定目录、项目名和本机端口，例如：
 
 ```bash
-docker compose -p tanhuo up -d --pull never
+curl -fsSL https://github.com/useroneoneone/dingshi-tanhuo/releases/latest/download/install.sh | bash -s -- --dir /opt/tanhuo --project tanhuo --port 3080
+```
+
+现有安装的端口等设置请修改部署目录中的 `.env`，再执行 `docker compose -p tanhuo up -d --pull never --no-build`。自定义目录后，更新继续指定原目录；项目名会从安装记录读取，也可显式指定原值。目标目录及所有父目录必须由 root 拥有、不可被组或其他用户写入，推荐 `/opt` 下的目录。
+
+### 更新
+
+再次执行相同的一键安装命令即可升级到最新稳定版。脚本只更新镜像版本及部署配置，不覆盖现有 `.env` 的其他设置，也不删除数据卷。启动失败会尝试恢复原部署配置，但不包含数据库快照；升级前仍需按下文备份数据。
+
+从旧的手动部署迁移时，先备份，再显式指定原部署目录、原 Compose 项目名，并加 `--adopt`：
+
+```bash
+curl -fsSL https://github.com/useroneoneone/dingshi-tanhuo/releases/latest/download/install.sh | bash -s -- --dir /root/tanhuo --project tanhuo --adopt
+```
+
+不要为了迁移改用另一个项目名或重新创建空数据卷。脚本默认拒绝覆盖非自身管理的非空目录。自动接管仅支持原版命名卷布局；自定义数据挂载、加密密钥或启动命令须手动迁移，不会强行覆盖。
+
+### 日常管理
+
+```bash
+cd /opt/tanhuo
 docker compose -p tanhuo ps
-docker compose -p tanhuo logs tanhuo
+docker compose -p tanhuo logs --tail 50 tanhuo
+docker compose -p tanhuo restart
 ```
 
-`--pull never` 使用本地导入的镜像，不需要服务器连接镜像仓库。默认仅监听服务器本机 `127.0.0.1:3000`，按下一节配置远程访问。用户名默认为 `admin`，首次登录后请在“系统设置”修改密码。已有管理员不会被环境变量重新设置密码。
+默认数据卷为 `tanhuo_tanhuo-data`。不要执行 `docker compose down -v`，它会删除数据库、会话和密钥。
 
 ### HTTPS 与访问限制
 
 不要在公网通过明文 HTTP 登录或填写密钥。推荐由同一服务器上的 Nginx/Caddy 提供 HTTPS，`.env` 设置：
 
 ```dotenv
-TANHUO_IMAGE=dingshi-tanhuo:1.0.0
+TANHUO_IMAGE=dingshi-tanhuo:1.0.1
 HOST_BIND=127.0.0.1
 HOST_PORT=3000
 SECURE_COOKIE=true
@@ -99,44 +97,52 @@ ALLOW_PRIVATE_ENDPOINTS=false
 
 反向代理转发到 `http://127.0.0.1:3000`，保留客户端请求的 `Host`，设置正确的 `X-Forwarded-Proto`，并覆盖客户端伪造的转发头。`TRUST_PROXY=true` 只适用于你控制的单层反向代理；应用端口不得直接对公网开放。云防火墙仅开放所需 SSH 和 HTTPS 端口。
 
-暂时没有域名和 HTTPS 时，保留 `HOST_BIND=127.0.0.1`、`SECURE_COOKIE=false`、`TRUST_PROXY=false`，在本地通过 SSH 隧道管理：
-
-```bash
-ssh -N -L 3000:127.0.0.1:3000 user@your-server
-```
-
-随后在本地访问 `http://127.0.0.1:3000`，不必开放服务器的 `3000` 端口。
-
-### 更新与回滚
-
-新版本仍在本地构建并上传。云端校验、`docker load` 后，将 `.env` 的 `TANHUO_IMAGE` 改为新版本，再运行：
-
-```bash
-docker compose -p tanhuo up -d --pull never
-docker compose -p tanhuo ps
-```
-
-始终使用相同的部署目录和 Compose 项目名。`-p tanhuo` 对应数据卷 `tanhuo_tanhuo-data`；已有部署若使用其他项目名，继续沿用原项目名。不要使用 `docker compose down -v`，它会删除数据库、会话和密钥。
-
-更新前备份。若版本没有不兼容的数据格式变化，可把 `TANHUO_IMAGE` 改回旧版本并执行相同启动命令回滚；涉及数据迁移的版本应按发布说明同时恢复备份。
+修改配置后，在部署目录重新运行 `docker compose -p tanhuo up -d --pull never --no-build`。没有 HTTPS 时保留 `SECURE_COOKIE=false`、`TRUST_PROXY=false` 并使用 SSH 隧道。
 
 ### 备份
 
 停止应用后备份整个数据卷，尤其是数据库和 `master.key`。丢失加密文件将无法解密 API 密钥；仅备份数据库不够。以下示例使用已加载的应用镜像，不额外下载备份工具镜像：
 
 ```bash
+cd /opt/tanhuo
 mkdir -p backups
 chmod 700 backups
 docker compose -p tanhuo stop
 docker run --rm --network none --user 0:0 --entrypoint tar \
   -v tanhuo_tanhuo-data:/data:ro \
   -v "$PWD/backups:/backup" \
-  dingshi-tanhuo:1.0.0 -czf /backup/tanhuo-backup.tar.gz -C /data .
+  dingshi-tanhuo:1.0.1 -czf /backup/tanhuo-backup.tar.gz -C /data .
 docker compose -p tanhuo start
 chmod 600 backups/tanhuo-backup.tar.gz
 ```
 
 替换示例中的实际卷名和镜像版本。备份含敏感数据，应加密保存并限制访问，不能上传到公开仓库或公开 Release。
+
+### 本地构建与离线部署
+
+一键安装不需要本地构建。维护者需要生成新版本时，才在本地 Docker 环境执行：
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-image.ps1 -Version 1.0.1
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\build-image.ps1 -Version 1.0.1 -Platform linux/arm64
+```
+
+Linux/macOS 对应 `bash scripts/build-image.sh --version 1.0.1`，ARM 添加 `--platform linux/arm64`。本地无法连接 Docker Hub 时，可添加 `-BaseImage public.ecr.aws/docker/library/node:24-bookworm-slim` 或 `--base-image public.ecr.aws/docker/library/node:24-bookworm-slim`。
+
+输出为 `artifacts/` 下的压缩镜像及校验文件，只包含镜像，不包含开发电脑的 `.env`、管理员或运行数据。脚本不自动推送任何镜像仓库，且不会覆盖已有归档。
+
+服务器不能访问 GitHub 时，也可手动上传 Release 的对应架构镜像、同名 `.sha256`、`compose.yaml` 和 `env.example`，在部署目录执行：
+
+```bash
+sha256sum -c dingshi-tanhuo-1.0.1-linux-amd64.tar.gz.sha256
+docker load -i dingshi-tanhuo-1.0.1-linux-amd64.tar.gz
+cp env.example .env
+chmod 600 .env
+docker compose -p tanhuo up -d --pull never --no-build
+docker compose -p tanhuo logs tanhuo
+```
+
+此处 `cp` 仅用于首次安装，升级不要覆盖已有 `.env`。手动回滚时可把 `TANHUO_IMAGE` 改为已加载的旧版本并重新启动；涉及数据格式变化时按对应发布说明恢复备份。
 
 ## 配置检测任务
 
@@ -198,6 +204,14 @@ npm run test:e2e
 
 端到端测试使用独立的临时数据库和本地模拟上游，不会请求真实模型。已有 Chrome/Edge 的环境也可以通过 `PLAYWRIGHT_CHANNEL=chrome` 或 `PLAYWRIGHT_CHANNEL=msedge` 运行。
 
+### 安装脚本测试
+
+加载本地镜像后，在一次性 Linux 容器中测试安装、升级和失败处理；测试使用模拟下载和 Docker 命令，不安装宿主机软件：
+
+```bash
+docker run --rm --network none --user 0:0 --entrypoint bash -v "${PWD}:/work:ro" dingshi-tanhuo:1.0.1 /work/tests/installer.test.sh
+```
+
 ## 项目结构
 
 ```text
@@ -209,4 +223,5 @@ Dockerfile          多阶段构建、非 root 运行
 compose.yaml        仅运行预构建镜像及持久化卷
 compose.build.yaml  可选的本地 Compose 构建配置
 scripts/build-image.*  本地构建、导出镜像和 SHA256
+scripts/install.sh  云服务器一键安装与更新
 ```

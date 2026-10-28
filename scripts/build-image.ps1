@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [string]$Version = '1.0.0',
+    [string]$Version = '1.0.1',
     [ValidateSet('linux/amd64', 'linux/arm64')]
     [string]$Platform = 'linux/amd64',
     [string]$Image = '',
@@ -18,13 +18,13 @@ if ($Help) {
 Build a Linux image locally and export a compressed, checksum-protected archive.
 
 Usage:
-  .\scripts\build-image.ps1 -Version 1.0.0
-  .\scripts\build-image.ps1 -Version 1.0.0 -Platform linux/arm64
-  .\scripts\build-image.ps1 -Version 1.0.0 -BaseImage public.ecr.aws/docker/library/node:24-bookworm-slim
-  .\scripts\build-image.ps1 -Version 1.0.0 -Image ghcr.io/OWNER/dingshi-tanhuo:1.0.0 -Push
+  .\scripts\build-image.ps1 -Version 1.0.1
+  .\scripts\build-image.ps1 -Version 1.0.1 -Platform linux/arm64
+  .\scripts\build-image.ps1 -Version 1.0.1 -BaseImage public.ecr.aws/docker/library/node:24-bookworm-slim
+  .\scripts\build-image.ps1 -Version 1.0.1 -Image ghcr.io/OWNER/dingshi-tanhuo:1.0.1 -Push
 
 Options:
-  -Version     Archive version and default image tag. Default: 1.0.0.
+  -Version     Archive version and default image tag. Default: 1.0.1.
   -Platform    linux/amd64 or linux/arm64. Match the cloud server architecture.
   -Image       Image reference. Default: dingshi-tanhuo:<Version>.
   -BaseImage   Optional Dockerfile NODE_IMAGE override.

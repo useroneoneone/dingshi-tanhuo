@@ -1,6 +1,6 @@
 {
   "name": "dingshi-tanhuo",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "A self-hosted, authenticated API conversation health monitor.",
   "type": "module",
